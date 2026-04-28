@@ -6,14 +6,18 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "dev:api": "npm --prefix api run start",
-    "build": "tsc -b && vite build",
+    "start": "node server/index.js",
+    "build": "tsc -b && vite build && npm --prefix api install && npm --prefix api run build",
     "build:api": "npm --prefix api run build",
     "build:all": "npm run build && npm run build:api",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
+    "@azure/storage-blob": "^12.31.0",
     "@vitejs/plugin-react": "^5.0.4",
+    "express": "^5.2.1",
     "lucide-react": "^0.468.0",
+    "multer": "^2.1.1",
     "pdfjs-dist": "^5.7.284",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
