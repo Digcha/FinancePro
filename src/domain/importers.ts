@@ -6,6 +6,10 @@ import { normalizeDate, nowLabel, parseAmount, roundMoney } from "./utils";
 
 export async function parseImportedFile(file: File): Promise<InvoiceInput> {
   const extension = file.name.split(".").pop()?.toLowerCase() ?? "datei";
+  if (!["pdf", "xml", "ubl", "txt", "eml", "jpg", "jpeg", "png", "webp"].includes(extension)) {
+    throw new Error(`Dateityp .${extension} wird nicht unterstützt.`);
+  }
+
   const documentType = extension.toUpperCase();
   const azureInput = await analyzeInvoiceWithAzure(file).catch((error: unknown) => {
     console.warn(error);
@@ -18,10 +22,10 @@ export async function parseImportedFile(file: File): Promise<InvoiceInput> {
     ...parseInvoiceDocument(mergedText, extension),
     ...azureInput,
   };
-  const net = parsed.net ?? 820;
+  const net = parsed.net ?? 0;
   const vatRate = parsed.vatRate ?? 20;
-  const vat = parsed.vat ?? roundMoney((net * vatRate) / 100);
-  const gross = parsed.gross ?? roundMoney(net + vat);
+  const vat = parsed.vat ?? (net > 0 ? roundMoney((net * vatRate) / 100) : 0);
+  const gross = parsed.gross ?? (net > 0 ? roundMoney(net + vat) : 0);
 
   return {
     ...parsed,
@@ -30,11 +34,10 @@ export async function parseImportedFile(file: File): Promise<InvoiceInput> {
     supplierAddress: parsed.supplierAddress ?? "",
     recipient: parsed.recipient ?? "FinancePro Demo GmbH",
     recipientAddress: parsed.recipientAddress ?? "Wiedner Hauptstraße 1, 1040 Wien",
-    invoiceNumber:
-      parsed.invoiceNumber ?? `IMPORT-${new Date().getFullYear()}-${Math.floor(Math.random() * 9000 + 1000)}`,
-    issueDate: parsed.issueDate || new Date().toISOString().slice(0, 10),
-    serviceDate: parsed.serviceDate || parsed.issueDate || new Date().toISOString().slice(0, 10),
-    dueDate: parsed.dueDate || new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+    invoiceNumber: parsed.invoiceNumber ?? "",
+    issueDate: parsed.issueDate || "",
+    serviceDate: parsed.serviceDate || parsed.issueDate || "",
+    dueDate: parsed.dueDate || "",
     net,
     vatRate,
     vat,
@@ -46,7 +49,7 @@ export async function parseImportedFile(file: File): Promise<InvoiceInput> {
     extractionConfidence: extractedText.length > 40 ? 86 : 52,
     extractedText: mergedText,
     scanReport,
-    lineItems: parsed.lineItems ?? [{ description: "Importposition", amount: net, taxRate: vatRate }],
+    lineItems: parsed.lineItems ?? (net > 0 ? [{ description: "Importposition", amount: net, taxRate: vatRate }] : []),
     audit: [
       ...(parsed.audit ?? []),
       { time: nowLabel(), label: `${file.name} importiert` },

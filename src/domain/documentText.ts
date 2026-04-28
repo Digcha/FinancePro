@@ -6,7 +6,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 export async function extractTextFromFile(file: File): Promise<string> {
   const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
-  if (["xml", "ubl", "txt"].includes(extension)) return file.text();
+  if (["xml", "ubl", "txt", "eml"].includes(extension)) return file.text();
   if (extension === "pdf") return extractPdfText(file);
   if (["jpg", "jpeg", "png", "webp"].includes(extension)) return recognizeImageText(file);
   return "";

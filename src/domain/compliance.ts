@@ -20,6 +20,7 @@ const REQUIRED_FIELDS: Array<{ key: keyof BaseInvoice; label: string }> = [
 export function runComplianceChecks(invoice: BaseInvoice): ComplianceCheck[] {
   return [
     checkRequiredFields(invoice),
+    checkLineItemDetails(invoice),
     checkUidFormat(invoice),
     checkTaxMath(invoice),
     checkRecipientUidThreshold(invoice),
@@ -29,7 +30,7 @@ export function runComplianceChecks(invoice: BaseInvoice): ComplianceCheck[] {
 }
 
 function checkRequiredFields(invoice: BaseInvoice): ComplianceCheck {
-  const missing = REQUIRED_FIELDS.filter((field) => !hasValue(invoice[field.key])).map((field) => field.label);
+  const missing = REQUIRED_FIELDS.filter((field) => !fieldHasValue(invoice, field.key)).map((field) => field.label);
   const state = missing.length === 0 ? "ok" : missing.length <= 2 ? "warn" : "risk";
 
   return {
@@ -42,6 +43,37 @@ function checkRequiredFields(invoice: BaseInvoice): ComplianceCheck {
         ? "Name, Anschrift, UID, Datum, Nummer, Entgelt, Steuerbetrag und Leistungsbeschreibung vorhanden."
         : `Fehlt oder unklar: ${missing.join(", ")}.`,
   };
+}
+
+function checkLineItemDetails(invoice: BaseInvoice): ComplianceCheck {
+  const invalidItems = invoice.lineItems.filter((item) => !item.description.trim() || item.amount <= 0 || !Number.isFinite(item.taxRate));
+  const mixedRates = new Set(invoice.lineItems.map((item) => item.taxRate)).size > 1;
+  if (invalidItems.length > 0 || invoice.lineItems.length === 0) {
+    return {
+      id: "line-item-details",
+      label: "Leistungspositionen",
+      state: "risk",
+      blocking: true,
+      detail: "Mindestens eine Position braucht Beschreibung, Betrag und Steuersatz.",
+    };
+  }
+
+  return {
+    id: "line-item-details",
+    label: "Leistungspositionen",
+    state: mixedRates ? "warn" : "ok",
+    blocking: false,
+    detail: mixedRates
+      ? "Gemischte Steuersätze erkannt. Positionen bleiben im Review sichtbar."
+      : "Art/Umfang der Leistung und Positionsbeträge sind auswertbar.",
+  };
+}
+
+function fieldHasValue(invoice: BaseInvoice, key: keyof BaseInvoice) {
+  const value = invoice[key];
+  if (["net", "vatRate", "gross"].includes(key)) return typeof value === "number" && Number.isFinite(value) && value > 0;
+  if (key === "vat") return typeof value === "number" && Number.isFinite(value) && value >= 0;
+  return hasValue(value);
 }
 
 function checkUidFormat(invoice: BaseInvoice): ComplianceCheck {

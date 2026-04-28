@@ -43,6 +43,19 @@ export function reprocessInvoice(invoice: Invoice, allInvoices: Invoice[], recal
   );
 }
 
+export function refreshInvoiceDraft(invoice: Invoice, allInvoices: Invoice[], recalculateTotals = false): Invoice {
+  const context = createRiskContext(allInvoices);
+  const base = normalizeInvoice(invoice, recalculateTotals, context);
+  return enrichInvoice(
+    {
+      ...base,
+      audit: invoice.audit,
+    },
+    invoice.status === "approved" ? "review" : invoice.status,
+    context,
+  );
+}
+
 export function approveInvoice(invoice: Invoice): Invoice {
   if (!canApproveInvoice(invoice)) {
     return {

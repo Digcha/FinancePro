@@ -7,6 +7,7 @@ export function evaluateRiskSignals(invoice: BaseInvoice, context: RiskContext):
     checkUidConfirmation(invoice, profile),
     checkIbanDeviation(invoice, profile),
     checkDuplicate(invoice, context),
+    checkAmountAnomaly(invoice, profile),
     checkInsolvency(profile),
     checkSupplierHistory(profile),
   ];
@@ -148,6 +149,50 @@ function checkInsolvency(profile?: SupplierProfile): RiskSignal {
     state: profile.insolvencyStatus === "hit" ? "risk" : "ok",
     blocking: profile.insolvencyStatus === "hit",
     detail: profile.insolvencyStatus === "hit" ? "Treffer im letzten Abgleich." : "Kein Treffer im letzten Abgleich.",
+  };
+}
+
+function checkAmountAnomaly(invoice: BaseInvoice, profile?: SupplierProfile): RiskSignal {
+  if (!profile || profile.recentInvoices.length === 0 || invoice.gross <= 0) {
+    return {
+      id: "amount-anomaly",
+      title: "Betragshistorie",
+      state: "warn",
+      blocking: false,
+      detail: "Keine belastbare Betragsbasis für diesen Lieferanten.",
+    };
+  }
+
+  const amounts = profile.recentInvoices.map((entry) => entry.gross).filter((amount) => amount > 0);
+  const average = amounts.reduce((sum, amount) => sum + amount, 0) / Math.max(1, amounts.length);
+  const ratio = average > 0 ? invoice.gross / average : 1;
+
+  if (ratio >= 2.5) {
+    return {
+      id: "amount-anomaly",
+      title: "Betragshistorie",
+      state: "risk",
+      blocking: false,
+      detail: `Rechnung liegt deutlich über der Lieferantenhistorie (${ratio.toFixed(1)}x Durchschnitt).`,
+    };
+  }
+
+  if (ratio >= 1.6) {
+    return {
+      id: "amount-anomaly",
+      title: "Betragshistorie",
+      state: "warn",
+      blocking: false,
+      detail: `Betrag ist erhöht gegenüber der letzten Lieferantenhistorie (${ratio.toFixed(1)}x Durchschnitt).`,
+    };
+  }
+
+  return {
+    id: "amount-anomaly",
+    title: "Betragshistorie",
+    state: "ok",
+    blocking: false,
+    detail: "Betrag passt zur bekannten Lieferantenhistorie.",
   };
 }
 

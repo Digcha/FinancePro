@@ -7,7 +7,7 @@ export async function analyzeFileQuality(file: File, extractedText = ""): Promis
   const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
   if (extension === "pdf") return analyzePdfQuality(file, extractedText);
   if (["jpg", "jpeg", "png", "webp"].includes(extension)) return analyzeImageQuality(file);
-  if (["xml", "ubl", "txt"].includes(extension)) return structuredDocumentQuality(extractedText);
+  if (["xml", "ubl", "txt", "eml"].includes(extension)) return structuredDocumentQuality(extractedText);
   return defaultScanReport("warn", 58, "Dateityp nicht vollständig bewertbar.");
 }
 
@@ -106,8 +106,8 @@ async function analyzeImageQuality(file: File): Promise<ScanReport> {
     {
       id: "perspective",
       label: "Perspektive",
-      state: "warn",
-      detail: "Echte Kantenerkennung ist vorbereitet, im Web-MVP aber noch heuristisch.",
+      state: completenessOk ? "ok" : "warn",
+      detail: completenessOk ? "Dokumentränder sind für den Review plausibel." : "Kamera gerader ausrichten und das ganze Blatt erfassen.",
     },
     {
       id: "brightness",

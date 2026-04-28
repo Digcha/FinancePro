@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   ArrowDownToLine,
   Building2,
+  Calculator,
   Camera,
   Check,
   CheckCircle,
@@ -15,12 +16,15 @@ import {
   Landmark,
   Lock,
   Mail,
+  Plus,
   RefreshCcw,
   Search,
   Send,
   ShieldAlert,
   ShieldCheck,
+  Server,
   SquareArrowOutUpRight,
+  Trash2,
   Upload,
   UserRound,
   XCircle,
@@ -35,6 +39,7 @@ import {
   createInvoiceRecord,
   createRiskContext,
   getInvoiceState,
+  refreshInvoiceDraft,
   reprocessInvoice,
   ruleSetVersion,
 } from "./domain/invoiceEngine";
@@ -43,9 +48,21 @@ import { countLearnedRules } from "./domain/learningRules";
 import { buildNeutralBookingRecord } from "./domain/posting";
 import { exportAdapters } from "./domain/referenceData";
 import { loadInvoices, saveInvoices } from "./domain/storage";
-import { ExportAdapter, Invoice, InvoiceStatus, SignalState, UserRole } from "./domain/types";
+import { ExportAdapter, Invoice, InvoiceStatus, LineItem, PaymentMethod, SignalState, UserRole } from "./domain/types";
 import { applyUidVerification, checkUidAutomatically, financeAtUidUrl } from "./domain/uidCheckApi";
-import { downloadText, formatDate, moneyFormatter } from "./domain/utils";
+import { downloadText, formatDate, moneyFormatter, nowLabel, roundMoney } from "./domain/utils";
+
+type ImportNotice = {
+  id: string;
+  state: SignalState;
+  title: string;
+  detail: string;
+};
+
+type WorkflowStep = {
+  label: string;
+  state: SignalState;
+};
 
 function App() {
   const [invoices, setInvoices] = useState<Invoice[]>(() => loadInvoices(initialInvoices));
@@ -56,12 +73,24 @@ function App() {
   const [query, setQuery] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [isCheckingUid, setIsCheckingUid] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [showEmailImport, setShowEmailImport] = useState(false);
+  const [emailText, setEmailText] = useState("");
+  const [importNotices, setImportNotices] = useState<ImportNotice[]>([]);
+  const [apiStatus, setApiStatus] = useState<"checking" | "online" | "offline">("checking");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     saveInvoices(invoices);
   }, [invoices]);
+
+  useEffect(() => {
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+    fetch(`${baseUrl}/api/health`)
+      .then((response) => setApiStatus(response.ok ? "online" : "offline"))
+      .catch(() => setApiStatus("offline"));
+  }, []);
 
   const selectedInvoice = invoices.find((invoice) => invoice.id === selectedId) ?? invoices[0];
   const neutralBooking = useMemo(() => buildNeutralBookingRecord(selectedInvoice), [selectedInvoice]);
@@ -93,9 +122,22 @@ function App() {
     return { blocked, review, approved };
   }, [invoices]);
 
+  const workflowSteps = useMemo(() => buildWorkflowSteps(selectedInvoice), [selectedInvoice]);
+
   const updateInvoice = (nextInvoice: Invoice) => {
     setInvoices((current) =>
       current.map((invoice) => (invoice.id === nextInvoice.id ? nextInvoice : invoice)),
+    );
+  };
+
+  const mutateSelectedInvoice = (mutator: (invoice: Invoice) => Invoice, recalculateTotals = false) => {
+    if (!selectedInvoice || !canEdit) return;
+    setInvoices((current) =>
+      current.map((invoice) => {
+        if (invoice.id !== selectedInvoice.id) return invoice;
+        const mutated = mutator(invoice);
+        return refreshInvoiceDraft(mutated, current, recalculateTotals);
+      }),
     );
   };
 
@@ -103,7 +145,56 @@ function App() {
     if (!selectedInvoice || !canEdit) return;
     const numericFields: Array<keyof Invoice> = ["net", "vatRate", "vat", "gross", "qualityScore", "extractionConfidence"];
     const parsedValue = numericFields.includes(field) ? Number(value) : value;
-    updateInvoice({ ...selectedInvoice, [field]: parsedValue });
+    mutateSelectedInvoice((invoice) => ({ ...invoice, [field]: parsedValue } as Invoice));
+  };
+
+  const updatePaymentMethod = (paymentMethod: PaymentMethod) => {
+    mutateSelectedInvoice((invoice) => ({ ...invoice, paymentMethod }));
+  };
+
+  const updateLineItem = (index: number, field: keyof LineItem, value: string) => {
+    mutateSelectedInvoice((invoice) => {
+      const lineItems = invoice.lineItems.map((item, itemIndex) => {
+        if (itemIndex !== index) return item;
+        const numericFields: Array<keyof LineItem> = ["amount", "taxRate", "quantity", "unitPrice"];
+        return {
+          ...item,
+          [field]: numericFields.includes(field) ? Number(value) : value,
+        };
+      });
+      return withLineItemTotals({ ...invoice, lineItems });
+    });
+  };
+
+  const addLineItem = () => {
+    mutateSelectedInvoice((invoice) => ({
+      ...invoice,
+      lineItems: [
+        ...invoice.lineItems,
+        {
+          description: "",
+          amount: 0,
+          taxRate: invoice.vatRate || 20,
+          quantity: 1,
+          unit: "Stk",
+          unitPrice: 0,
+        },
+      ],
+    }));
+  };
+
+  const removeLineItem = (index: number) => {
+    mutateSelectedInvoice((invoice) => withLineItemTotals({
+      ...invoice,
+      lineItems: invoice.lineItems.filter((_, itemIndex) => itemIndex !== index),
+    }));
+  };
+
+  const recalculateSelectedFromLines = () => {
+    mutateSelectedInvoice((invoice) => ({
+      ...withLineItemTotals(invoice),
+      audit: [...invoice.audit, { time: nowLabel(), label: "Beträge aus Positionszeilen neu berechnet" }],
+    }));
   };
 
   const approveSelected = () => {
@@ -131,15 +222,58 @@ function App() {
 
   const importFiles = async (files: File[]) => {
     if (!files.length) return;
-    const importedInputs = await Promise.all(files.map(parseImportedFile));
-    const importedInvoices = importedInputs.reduce<Invoice[]>((records, input) => {
-      const context = createRiskContext([...records, ...invoices]);
-      return [...records, createInvoiceRecord(input, context)];
-    }, []);
+    setIsImporting(true);
+    const acceptedInvoices: Invoice[] = [];
+    const notices: ImportNotice[] = [];
 
-    const checkedInvoices = await Promise.all(importedInvoices.map(verifyUidIfPossible));
-    setInvoices((current) => [...checkedInvoices, ...current]);
-    setSelectedId(checkedInvoices[0].id);
+    for (const file of files) {
+      try {
+        const input = await parseImportedFile(file);
+        const context = createRiskContext([...acceptedInvoices, ...invoices]);
+        const invoice = createInvoiceRecord(input, context);
+        if (invoice.scanReport.status === "risk") {
+          notices.push({
+            id: `${file.name}-${Date.now()}-rejected`,
+            state: "risk",
+            title: `${file.name} abgewiesen`,
+            detail: invoice.scanReport.hints.join(" "),
+          });
+          continue;
+        }
+
+        const checkedInvoice = await verifyUidIfPossible(invoice);
+        acceptedInvoices.push(checkedInvoice);
+        notices.push({
+          id: `${file.name}-${Date.now()}-accepted`,
+          state: getInvoiceState(checkedInvoice),
+          title: `${file.name} importiert`,
+          detail: `${checkedInvoice.invoiceNumber || "ohne Rechnungsnummer"} · ${checkedInvoice.supplier || "Lieferant offen"}`,
+        });
+      } catch (error) {
+        notices.push({
+          id: `${file.name}-${Date.now()}-failed`,
+          state: "risk",
+          title: `${file.name} nicht importiert`,
+          detail: error instanceof Error ? error.message : "Import fehlgeschlagen.",
+        });
+      }
+    }
+
+    if (acceptedInvoices.length > 0) {
+      setInvoices((current) => [...acceptedInvoices, ...current]);
+      setSelectedId(acceptedInvoices[0].id);
+    }
+    setImportNotices((current) => [...notices, ...current].slice(0, 6));
+    setIsImporting(false);
+  };
+
+  const importEmailInvoice = async () => {
+    const content = emailText.trim();
+    if (!content) return;
+    const file = new File([content], `email-import-${Date.now()}.eml`, { type: "message/rfc822" });
+    await importFiles([file]);
+    setEmailText("");
+    setShowEmailImport(false);
   };
 
   const verifyUidIfPossible = async (invoice: Invoice) => {
@@ -157,6 +291,16 @@ function App() {
     setIsCheckingUid(true);
     try {
       updateInvoice(applyUidVerification(selectedInvoice, await checkUidAutomatically(selectedInvoice.supplierUid)));
+    } catch (error) {
+      setImportNotices((current) => [
+        {
+          id: `uid-${selectedInvoice.id}-${Date.now()}`,
+          state: "risk" as const,
+          title: "UID-Prüfung fehlgeschlagen",
+          detail: error instanceof Error ? error.message : "Der UID-Dienst hat nicht geantwortet.",
+        },
+        ...current,
+      ].slice(0, 6));
     } finally {
       setIsCheckingUid(false);
     }
@@ -169,6 +313,10 @@ function App() {
       getExportPayload(selectedInvoice, adapter),
       getExportMimeType(adapter),
     );
+    updateInvoice({
+      ...selectedInvoice,
+      audit: [...selectedInvoice.audit, { time: nowLabel(), label: `${adapter}-Export heruntergeladen` }],
+    });
   };
 
   const downloadAuditPackage = () => {
@@ -208,6 +356,10 @@ function App() {
         </div>
 
         <div className="topbar-actions" aria-label="Arbeitsstatus">
+          <span className={`system-status ${apiStatus}`}>
+            <Server size={14} />
+            {apiStatus === "online" ? "API aktiv" : apiStatus === "checking" ? "API prüft" : "Lokale Prüfung"}
+          </span>
           <span className="rule-version">{ruleSetVersion}</span>
           <span className="rule-version">{learnedRules} Regeln</span>
           <StatusPill label={`${inboxStats.review} im Review`} state="warn" />
@@ -235,7 +387,7 @@ function App() {
               ref={fileInputRef}
               className="visually-hidden"
               type="file"
-              accept=".pdf,.xml,.txt,.ubl,.jpg,.jpeg,.png"
+              accept=".pdf,.xml,.txt,.eml,.ubl,.jpg,.jpeg,.png,.webp"
               multiple
               onChange={handleFileInput}
             />
@@ -262,6 +414,7 @@ function App() {
           <button
             className={`drop-zone ${isDragging ? "is-dragging" : ""}`}
             onClick={() => fileInputRef.current?.click()}
+            disabled={isImporting}
             onDragOver={(event) => {
               event.preventDefault();
               setIsDragging(true);
@@ -270,14 +423,48 @@ function App() {
             onDrop={handleDrop}
           >
             <Upload size={20} />
-            <span>Datei importieren</span>
-            <small>PDF, XML, UBL, JPG</small>
+            <span>{isImporting ? "Import läuft" : "Datei importieren"}</span>
+            <small>PDF, JPG, PNG, XML, UBL, E-Mail</small>
           </button>
 
-          <button className="camera-zone" onClick={() => cameraInputRef.current?.click()}>
+          <button className="camera-zone" onClick={() => cameraInputRef.current?.click()} disabled={isImporting}>
             <Camera size={18} />
             <span>Scan mit Kamera</span>
           </button>
+
+          <button className="camera-zone" onClick={() => setShowEmailImport((current) => !current)}>
+            <Mail size={18} />
+            <span>E-Mail-Text importieren</span>
+          </button>
+
+          {showEmailImport && (
+            <div className="email-import">
+              <textarea
+                value={emailText}
+                onChange={(event) => setEmailText(event.target.value)}
+                placeholder="Rechnungsmail oder Text einfügen"
+                aria-label="E-Mail-Rechnungstext"
+              />
+              <button className="primary-action" onClick={importEmailInvoice} disabled={!emailText.trim() || isImporting}>
+                <Upload size={16} />
+                Importieren
+              </button>
+            </div>
+          )}
+
+          {importNotices.length > 0 && (
+            <div className="import-events" aria-label="Importprotokoll">
+              {importNotices.map((notice) => (
+                <div key={notice.id} className={`import-event ${notice.state}`}>
+                  <SignalIcon state={notice.state} />
+                  <div>
+                    <strong>{notice.title}</strong>
+                    <span>{notice.detail}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="invoice-list">
             {filteredInvoices.map((invoice) => (
@@ -370,6 +557,10 @@ function App() {
                 <span key={hint}>{hint}</span>
               ))}
             </div>
+            <details className="extracted-text">
+              <summary>Extrahierter Dokumenttext</summary>
+              <pre>{selectedInvoice.extractedText || "Kein Dokumenttext gespeichert."}</pre>
+            </details>
           </section>
         </section>
 
@@ -382,6 +573,8 @@ function App() {
             <StatusBadge status={selectedInvoice.status} />
           </div>
 
+          <WorkflowStrip steps={workflowSteps} />
+
           <div className="field-grid">
             <Field disabled={!canEdit} label="Lieferant" value={selectedInvoice.supplier} onChange={(value) => updateField("supplier", value)} />
             <Field disabled={!canEdit} label="Adresse Lieferant" value={selectedInvoice.supplierAddress} onChange={(value) => updateField("supplierAddress", value)} />
@@ -390,12 +583,62 @@ function App() {
             <Field disabled={!canEdit} label="Adresse Empfänger" value={selectedInvoice.recipientAddress} onChange={(value) => updateField("recipientAddress", value)} />
             <Field disabled={!canEdit} label="UID Empfänger" value={selectedInvoice.recipientUid} onChange={(value) => updateField("recipientUid", value)} />
             <Field disabled={!canEdit} label="Rechnungsnummer" value={selectedInvoice.invoiceNumber} onChange={(value) => updateField("invoiceNumber", value)} />
+            <Field disabled={!canEdit} label="Rechnungsdatum" value={selectedInvoice.issueDate} type="date" onChange={(value) => updateField("issueDate", value)} />
+            <Field disabled={!canEdit} label="Leistungsdatum" value={selectedInvoice.serviceDate} type="date" onChange={(value) => updateField("serviceDate", value)} />
+            <Field disabled={!canEdit} label="Fälligkeitsdatum" value={selectedInvoice.dueDate} type="date" onChange={(value) => updateField("dueDate", value)} />
             <Field disabled={!canEdit} label="IBAN" value={selectedInvoice.iban} onChange={(value) => updateField("iban", value)} />
+            <Field disabled={!canEdit} label="BIC" value={selectedInvoice.bic} onChange={(value) => updateField("bic", value)} />
+            <Field disabled={!canEdit} label="Währung" value={selectedInvoice.currency} onChange={(value) => updateField("currency", value)} />
+            <Field disabled={!canEdit} label="Quelle" value={selectedInvoice.source} onChange={(value) => updateField("source", value)} />
+            <Field disabled={!canEdit} label="Dokumenttyp" value={selectedInvoice.documentType} onChange={(value) => updateField("documentType", value)} />
             <Field disabled={!canEdit} label="Netto" value={String(selectedInvoice.net)} type="number" onChange={(value) => updateField("net", value)} />
             <Field disabled={!canEdit} label="USt. %" value={String(selectedInvoice.vatRate)} type="number" onChange={(value) => updateField("vatRate", value)} />
             <Field disabled={!canEdit} label="Steuer" value={String(selectedInvoice.vat)} type="number" onChange={(value) => updateField("vat", value)} />
             <Field disabled={!canEdit} label="Brutto" value={String(selectedInvoice.gross)} type="number" onChange={(value) => updateField("gross", value)} />
+            <SelectField
+              disabled={!canEdit}
+              label="Zahlungsart"
+              value={selectedInvoice.paymentMethod}
+              options={[
+                { value: "open", label: "Offen" },
+                { value: "bank", label: "Bank bezahlt" },
+                { value: "cash", label: "Bar/Kassa bezahlt" },
+              ]}
+              onChange={(value) => updatePaymentMethod(value as PaymentMethod)}
+            />
+            <Field disabled={!canEdit} label="Reverse-Charge-/Sonderhinweis" value={selectedInvoice.reverseChargeNote} onChange={(value) => updateField("reverseChargeNote", value)} />
           </div>
+
+          <section className="line-editor" aria-label="Positionszeilen">
+            <div className="section-title">
+              <Calculator size={17} />
+              <span>Positionszeilen</span>
+            </div>
+            <div className="line-table">
+              {selectedInvoice.lineItems.map((item, index) => (
+                <div className="line-edit-row" key={`${selectedInvoice.id}-line-${index}`}>
+                  <Field disabled={!canEdit} label="Beschreibung" value={item.description} onChange={(value) => updateLineItem(index, "description", value)} />
+                  <Field disabled={!canEdit} label="Menge" value={String(item.quantity ?? 1)} type="number" onChange={(value) => updateLineItem(index, "quantity", value)} />
+                  <Field disabled={!canEdit} label="Einheit" value={item.unit ?? ""} onChange={(value) => updateLineItem(index, "unit", value)} />
+                  <Field disabled={!canEdit} label="Betrag netto" value={String(item.amount)} type="number" onChange={(value) => updateLineItem(index, "amount", value)} />
+                  <Field disabled={!canEdit} label="USt. %" value={String(item.taxRate)} type="number" onChange={(value) => updateLineItem(index, "taxRate", value)} />
+                  <button className="icon-button danger" title="Position entfernen" aria-label="Position entfernen" onClick={() => removeLineItem(index)} disabled={!canEdit || selectedInvoice.lineItems.length <= 1}>
+                    <Trash2 size={17} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="line-actions">
+              <button className="secondary-action" onClick={addLineItem} disabled={!canEdit}>
+                <Plus size={17} />
+                Position
+              </button>
+              <button className="secondary-action" onClick={recalculateSelectedFromLines} disabled={!canEdit}>
+                <Calculator size={17} />
+                Summen berechnen
+              </button>
+            </div>
+          </section>
 
           <div className="uid-actions">
             <button className="secondary-action" onClick={checkSelectedUid} disabled={!selectedInvoice.supplierUid || isCheckingUid}>
@@ -523,13 +766,40 @@ function Field({
   label: string;
   value: string;
   disabled?: boolean;
-  type?: "text" | "number";
+  type?: "text" | "number" | "date";
   onChange: (value: string) => void;
 }) {
   return (
     <label className="field">
       <span>{label}</span>
       <input disabled={disabled} type={type} value={value} onChange={(event) => onChange(event.target.value)} />
+    </label>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+  disabled = false,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <select disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }
@@ -568,6 +838,19 @@ function StatusBadge({ status }: { status: InvoiceStatus }) {
   );
 }
 
+function WorkflowStrip({ steps }: { steps: WorkflowStep[] }) {
+  return (
+    <div className="workflow-strip" aria-label="Workflowstatus">
+      {steps.map((step) => (
+        <div key={step.label} className={`workflow-step ${step.state}`}>
+          <SignalIcon state={step.state} />
+          <span>{step.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SignalGroup({
   title,
   icon,
@@ -596,6 +879,48 @@ function SignalGroup({
       </div>
     </section>
   );
+}
+
+function withLineItemTotals(invoice: Invoice): Invoice {
+  const net = roundMoney(invoice.lineItems.reduce((sum, item) => sum + Number(item.amount || 0), 0));
+  const vat = roundMoney(invoice.lineItems.reduce((sum, item) => sum + (Number(item.amount || 0) * Number(item.taxRate || 0)) / 100, 0));
+  const gross = roundMoney(net + vat);
+  const rates = Array.from(new Set(invoice.lineItems.map((item) => Number(item.taxRate || 0))));
+  const vatRate = rates.length === 1 ? rates[0] : 0;
+  const taxCode = invoice.reverseChargeNote.trim() ? "RC" : rates.length === 1 ? `V${vatRate}` : "MIX";
+
+  return {
+    ...invoice,
+    net,
+    vat,
+    gross,
+    vatRate,
+    taxCode,
+  };
+}
+
+function buildWorkflowSteps(invoice: Invoice): WorkflowStep[] {
+  const complianceState = invoice.checks.some((check) => check.state === "risk")
+    ? "risk"
+    : invoice.checks.some((check) => check.state === "warn")
+      ? "warn"
+      : "ok";
+  const riskState = invoice.risks.some((risk) => risk.state === "risk")
+    ? "risk"
+    : invoice.risks.some((risk) => risk.state === "warn")
+      ? "warn"
+      : "ok";
+  const bookingState: SignalState = invoice.category && invoice.debitAccount && invoice.creditAccount && invoice.taxCode ? "ok" : "warn";
+  const exportState: SignalState = invoice.status === "approved" ? "ok" : invoice.status === "blocked" ? "risk" : "warn";
+
+  return [
+    { label: "Import", state: invoice.source ? "ok" : "warn" },
+    { label: "Scan", state: invoice.scanReport.status },
+    { label: "§ 11", state: complianceState },
+    { label: "Risiko", state: riskState },
+    { label: "Buchung", state: bookingState },
+    { label: "Export", state: exportState },
+  ];
 }
 
 export default App;
