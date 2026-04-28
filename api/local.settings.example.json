@@ -1,0 +1,15 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT": "https://<your-resource>.cognitiveservices.azure.com/",
+    "AZURE_DOCUMENT_INTELLIGENCE_KEY": "<your-key>",
+    "AZURE_DOCUMENT_INTELLIGENCE_API_VERSION": "2024-11-30",
+    "AZURE_STORAGE_CONNECTION_STRING": "<your-storage-connection-string>",
+    "AZURE_STORAGE_CONTAINER": "invoices"
+  },
+  "Host": {
+    "CORS": "*"
+  }
+}

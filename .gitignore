@@ -1,0 +1,55 @@
+node_modules/
+dist/
+api/node_modules/
+api/dist/
+
+# TypeScript / build caches
+*.tsbuildinfo
+.vite/
+.turbo/
+.cache/
+coverage/
+
+# Local environment and secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+api/local.settings.json
+api/.env
+api/.env.local
+api/.env.*.local
+*.pem
+*.pfx
+*.key
+*.cert
+*.crt
+secrets.json
+
+# Azure / Functions local state
+.azure/
+.funcignore.local
+local.settings.json
+bin/
+obj/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Local test artifacts
+tmp/
+output/
+screenshots/
+playwright-report/
+test-results/
