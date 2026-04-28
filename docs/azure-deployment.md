@@ -1,6 +1,14 @@
 # FinancePro auf Azure deployen
 
-Diese Variante passt zu deinem 200-USD-Azure-Guthaben:
+Hinweis: Der aktive Setup-Pfad ist inzwischen **Azure App Service Web App**. Verwende zuerst:
+
+- [app-service-start.md](./app-service-start.md)
+
+Die frühere Static-Web-Apps-Variante bleibt unten als Alternative dokumentiert.
+
+## Alternative: Static Web Apps
+
+Diese Variante passt ebenfalls zu deinem 200-USD-Azure-Guthaben:
 
 - Azure Static Web Apps für das React/Vite-Frontend
 - integrierte Azure Functions API im Ordner `api`
