@@ -1,0 +1,201 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Invoice {
+  id                            String              @id @default(cuid())
+  tenantId                      String              @default("demo-tenant")
+  documentType                  String
+  supplierName                  String?
+  supplierAddress               String?
+  supplierUid                   String?
+  supplierIban                  String?
+  supplierBic                   String?
+  supplierCompanyRegisterNumber String?
+  customerName                  String?
+  customerAddress               String?
+  customerUid                   String?
+  customerNumber                String?
+  invoiceNumber                 String?
+  invoiceDate                   DateTime?
+  deliveryDate                  DateTime?
+  servicePeriod                 String?
+  orderNumber                   String?
+  offerNumber                   String?
+  deliveryNoteNumber            String?
+  paymentReference              String?
+  zeroTaxReason                 String?
+  currency                      String              @default("EUR")
+  netAmount                     Float?
+  taxAmount                     Float?
+  taxRate                       Float?
+  grossAmount                   Float?
+  paymentTerms                  String?
+  status                        String              @default("review_required")
+  reviewStatus                  String              @default("pending")
+  validationStatus              String              @default("warning")
+  riskLevel                     String              @default("medium")
+  exportApproved                Boolean             @default(false)
+  aiProvider                    String?
+  aiModel                       String?
+  aiMode                        String              @default("mock")
+  aiStatus                      String              @default("not_started")
+  aiErrorCode                   String?
+  aiErrorMessage                String?
+  aiOverallConfidence           Float?
+  aiRawResultJson               String?
+  aiNormalizedResultJson        String?
+  aiAnalyzedAt                  DateTime?
+  lastReviewedAt                DateTime?
+  createdAt                     DateTime            @default(now())
+  updatedAt                     DateTime            @updatedAt
+  pages                         InvoicePage[]
+  extractedFields               InvoiceExtractedField[]
+  lineItems                     InvoiceLineItem[]
+  validationResults             ValidationResult[]
+  riskIndicators                RiskIndicator[]
+  bookingSuggestion             BookingSuggestion?
+  auditLogs                     AuditLog[]
+  exports                       ExportRecord[]
+
+  @@index([tenantId])
+  @@index([supplierName, invoiceNumber])
+}
+
+model InvoiceExtractedField {
+  id               String    @id @default(cuid())
+  invoiceId        String
+  fieldPath        String
+  label            String
+  aiValue          String?
+  finalValue       String?
+  valueType        String    @default("string")
+  confidence       Float
+  sourcePageNumber Int?
+  sourceText       String?
+  needsReview      Boolean   @default(true)
+  status           String    @default("extracted")
+  boundingBoxJson  String?
+  correctedBy      String?
+  correctedAt      DateTime?
+  confirmedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  invoice          Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@unique([invoiceId, fieldPath])
+  @@index([invoiceId])
+}
+
+model InvoicePage {
+  id                 String  @id @default(cuid())
+  invoiceId          String
+  fileName           String
+  originalFilePath   String
+  previewImagePath   String?
+  pageNumberDetected Int?
+  totalPagesDetected Int?
+  qualityStatus      String
+  sharpnessScore     Float
+  completenessScore  Float
+  perspectiveScore   Float
+  extractedText      String
+  invoice            Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+model InvoiceLineItem {
+  id               String  @id @default(cuid())
+  invoiceId        String
+  sourcePageNumber Int?
+  positionNumber   String?
+  quantity         Float?
+  unit             String?
+  description      String
+  unitPrice        Float?
+  duration         String?
+  discountPercent  Float?
+  netAmount        Float?
+  taxRate          Float?
+  grossAmount      Float?
+  confidence       Float
+  invoice          Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+model ValidationResult {
+  id               String  @id @default(cuid())
+  invoiceId        String
+  field            String
+  status           String
+  severity         String
+  explanation      String
+  sourcePageNumber Int?
+  invoice          Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+model RiskIndicator {
+  id             String  @id @default(cuid())
+  invoiceId      String
+  title          String
+  description    String
+  severity       String
+  recommendation String
+  reason         String
+  invoice        Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+model BookingSuggestion {
+  id              String  @id @default(cuid())
+  invoiceId       String  @unique
+  bookingDate     DateTime?
+  documentNumber  String?
+  supplier        String?
+  bookingText     String
+  netAmount       Float?
+  taxAmount       Float?
+  grossAmount     Float?
+  taxAccount      String?
+  expenseAccount  String?
+  supplierAccount String?
+  costCenter      String?
+  status          String  @default("draft")
+  invoice         Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  action      String
+  description String
+  actor       String
+  createdAt   DateTime @default(now())
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+model ExportRecord {
+  id               String   @id @default(cuid())
+  invoiceId        String
+  targetSystem     String
+  format           String
+  status           String
+  fileName         String?
+  validationSummary String?
+  createdAt        DateTime @default(now())
+  invoice          Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}

@@ -1,5 +1,7 @@
 node_modules/
 dist/
+.next/
+out/
 api/node_modules/
 api/dist/
 
@@ -53,3 +55,9 @@ output/
 screenshots/
 playwright-report/
 test-results/
+
+# FinancePro local runtime data
+prisma/dev.db
+prisma/dev.db-journal
+uploads/*
+!uploads/.gitkeep
