@@ -18,7 +18,7 @@ export type ValidationFieldStatus =
 export type ValidationSeverity = "info" | "warning" | "error";
 export type RiskSeverity = "low" | "medium" | "high";
 export type BookingStatus = "draft" | "reviewed" | "approved";
-export type ExportTarget = "BMD" | "RZL" | "DOMIZIL_PLUS" | "BUSINESS_CENTRAL";
+export type ExportTarget = "BMD" | "RZL" | "DOMIZIL_PLUS" | "BUSINESS_CENTRAL" | "GENERIC_CSV" | "GENERIC_JSON";
 export type ExportFormat = "csv" | "json";
 export type QualityStatus = "accepted" | "warning" | "rejected";
 

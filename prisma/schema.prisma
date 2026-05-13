@@ -7,9 +7,187 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Tenant {
+  id                   String    @id @default(cuid())
+  name                 String
+  slug                 String    @unique
+  legalName            String?
+  uidNumber            String?
+  address              String?
+  billingEmail         String?
+  defaultCurrency      String    @default("EUR")
+  defaultExportTarget  String    @default("GENERIC_CSV")
+  allowedExportTargets String    @default("BMD,RZL,BUSINESS_CENTRAL,GENERIC_CSV,GENERIC_JSON")
+  status               String    @default("active")
+  licensePlan          String    @default("starter")
+  maxUsers             Int       @default(3)
+  maxInvoicesPerMonth  Int       @default(100)
+  storageLimitMb       Int       @default(1024)
+  aiMonthlyBudgetCents Int?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  auditLogs     AuditLog[]
+  exportRecords ExportRecord[]
+  invoices      Invoice[]
+  licenseEvents LicenseEvent[]
+  pages         InvoicePage[]
+  platformLogs  PlatformAuditLog[]
+  settings      TenantSetting[]
+  usageRecords  UsageRecord[]
+  users         User[]
+  vendors       Vendor[]
+}
+
+model User {
+  id                 String    @id @default(cuid())
+  tenantId           String?
+  email              String    @unique
+  username           String    @unique
+  passwordHash       String
+  displayName        String
+  role               String
+  status             String    @default("active")
+  mustChangePassword Boolean   @default(true)
+  lastLoginAt        DateTime?
+  createdByUserId    String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  createdBy           User?              @relation("UserCreatedBy", fields: [createdByUserId], references: [id])
+  createdUsers        User[]             @relation("UserCreatedBy")
+  tenant              Tenant?            @relation(fields: [tenantId], references: [id])
+  approvedInvoices    Invoice[]          @relation("InvoiceApprovedBy")
+  assignedInvoices    Invoice[]          @relation("InvoiceAssignedTo")
+  auditLogs           AuditLog[]         @relation("AuditActor")
+  createdExports      ExportRecord[]     @relation("ExportCreatedBy")
+  licenseEvents       LicenseEvent[]     @relation("LicenseEventActor")
+  platformAuditLogs   PlatformAuditLog[] @relation("PlatformAuditActor")
+  rejectedInvoices    Invoice[]          @relation("InvoiceRejectedBy")
+  uploadedInvoices    Invoice[]          @relation("InvoiceUploadedBy")
+  userSettings        UserSetting[]
+
+  @@index([tenantId])
+  @@index([role])
+  @@index([status])
+}
+
+model TenantSetting {
+  id        String   @id @default(cuid())
+  tenantId  String
+  key       String
+  valueJson String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, key])
+}
+
+model UserSetting {
+  id        String   @id @default(cuid())
+  userId    String
+  key       String
+  valueJson String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+}
+
+model LicenseEvent {
+  id            String   @id @default(cuid())
+  tenantId      String
+  eventType     String
+  oldValueJson  String?
+  newValueJson  String?
+  actorUserId   String?
+  createdAt     DateTime @default(now())
+
+  actor  User?  @relation("LicenseEventActor", fields: [actorUserId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([actorUserId])
+}
+
+model UsageRecord {
+  id                    String   @id @default(cuid())
+  tenantId              String
+  period                String
+  invoicesUploaded      Int      @default(0)
+  aiAnalyses            Int      @default(0)
+  aiInputTokens         Int      @default(0)
+  aiOutputTokens        Int      @default(0)
+  storageUsedMb         Float    @default(0)
+  estimatedAiCostCents  Int      @default(0)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, period])
+}
+
+model PlatformAuditLog {
+  id          String   @id @default(cuid())
+  tenantId    String?
+  actorUserId String?
+  action      String
+  targetType  String?
+  targetId    String?
+  description String
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  actor User?   @relation("PlatformAuditActor", fields: [actorUserId], references: [id])
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@index([actorUserId])
+}
+
+model Vendor {
+  id                    String    @id @default(cuid())
+  tenantId              String
+  name                  String
+  normalizedName        String
+  uidNumber             String?
+  iban                  String?
+  bic                   String?
+  address               String?
+  defaultExpenseAccount String?
+  defaultCostCenter     String?
+  trustStatus           String    @default("unknown")
+  lastInvoiceAt         DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, normalizedName])
+}
+
 model Invoice {
-  id                            String              @id @default(cuid())
-  tenantId                      String              @default("demo-tenant")
+  id                            String   @id @default(cuid())
+  tenantId                      String
+  uploadedByUserId              String?
+  assignedToUserId              String?
+  approvedByUserId              String?
+  approvedAt                    DateTime?
+  rejectedByUserId              String?
+  rejectedAt                    DateTime?
+  rejectionReason               String?
+  originalFileName              String?
+  originalMimeType              String?
+  originalFileSize              Int?
+  storageRoot                   String?
+  documentPreviewPath           String?
+  currentWorkflowStep           String   @default("review")
   documentType                  String
   supplierName                  String?
   supplierAddress               String?
@@ -30,21 +208,22 @@ model Invoice {
   deliveryNoteNumber            String?
   paymentReference              String?
   zeroTaxReason                 String?
-  currency                      String              @default("EUR")
+  currency                      String   @default("EUR")
   netAmount                     Float?
   taxAmount                     Float?
   taxRate                       Float?
   grossAmount                   Float?
   paymentTerms                  String?
-  status                        String              @default("review_required")
-  reviewStatus                  String              @default("pending")
-  validationStatus              String              @default("warning")
-  riskLevel                     String              @default("medium")
-  exportApproved                Boolean             @default(false)
+  status                        String   @default("review_required")
+  reviewStatus                  String   @default("pending")
+  validationStatus              String   @default("warning")
+  riskLevel                     String   @default("medium")
+  exportApproved                Boolean  @default(false)
+  exportStatus                  String   @default("blocked")
   aiProvider                    String?
   aiModel                       String?
-  aiMode                        String              @default("mock")
-  aiStatus                      String              @default("not_started")
+  aiMode                        String   @default("mock")
+  aiStatus                      String   @default("not_started")
   aiErrorCode                   String?
   aiErrorMessage                String?
   aiOverallConfidence           Float?
@@ -52,19 +231,27 @@ model Invoice {
   aiNormalizedResultJson        String?
   aiAnalyzedAt                  DateTime?
   lastReviewedAt                DateTime?
-  createdAt                     DateTime            @default(now())
-  updatedAt                     DateTime            @updatedAt
-  pages                         InvoicePage[]
-  extractedFields               InvoiceExtractedField[]
-  lineItems                     InvoiceLineItem[]
-  validationResults             ValidationResult[]
-  riskIndicators                RiskIndicator[]
-  bookingSuggestion             BookingSuggestion?
-  auditLogs                     AuditLog[]
-  exports                       ExportRecord[]
+  createdAt                     DateTime @default(now())
+  updatedAt                     DateTime @updatedAt
+
+  approvedBy       User?                    @relation("InvoiceApprovedBy", fields: [approvedByUserId], references: [id])
+  assignedTo       User?                    @relation("InvoiceAssignedTo", fields: [assignedToUserId], references: [id])
+  rejectedBy       User?                    @relation("InvoiceRejectedBy", fields: [rejectedByUserId], references: [id])
+  tenant           Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  uploadedBy       User?                    @relation("InvoiceUploadedBy", fields: [uploadedByUserId], references: [id])
+  auditLogs        AuditLog[]
+  bookingSuggestion BookingSuggestion?
+  exportedRecords  ExportRecord[]
+  extractedFields  InvoiceExtractedField[]
+  lineItems        InvoiceLineItem[]
+  pages            InvoicePage[]
+  riskIndicators   RiskIndicator[]
+  validationResults ValidationResult[]
 
   @@index([tenantId])
-  @@index([supplierName, invoiceNumber])
+  @@index([tenantId, status])
+  @@index([tenantId, supplierName, invoiceNumber])
+  @@index([uploadedByUserId])
 }
 
 model InvoiceExtractedField {
@@ -86,27 +273,36 @@ model InvoiceExtractedField {
   confirmedAt      DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
-  invoice          Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   @@unique([invoiceId, fieldPath])
   @@index([invoiceId])
 }
 
 model InvoicePage {
-  id                 String  @id @default(cuid())
-  invoiceId          String
-  fileName           String
-  originalFilePath   String
-  previewImagePath   String?
-  pageNumberDetected Int?
-  totalPagesDetected Int?
-  qualityStatus      String
-  sharpnessScore     Float
-  completenessScore  Float
-  perspectiveScore   Float
-  extractedText      String
-  invoice            Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  id                   String  @id @default(cuid())
+  tenantId             String
+  invoiceId            String
+  fileName             String
+  mimeType             String?
+  originalFilePath     String
+  previewImagePath     String?
+  pageImagePath        String?
+  thumbnailPath        String?
+  originalPageFilePath String?
+  pageNumberDetected   Int?
+  totalPagesDetected   Int?
+  qualityStatus        String
+  sharpnessScore       Float
+  completenessScore    Float
+  perspectiveScore     Float
+  extractedText        String
 
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
   @@index([invoiceId])
 }
 
@@ -125,7 +321,8 @@ model InvoiceLineItem {
   taxRate          Float?
   grossAmount      Float?
   confidence       Float
-  invoice          Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   @@index([invoiceId])
 }
@@ -138,7 +335,8 @@ model ValidationResult {
   severity         String
   explanation      String
   sourcePageNumber Int?
-  invoice          Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   @@index([invoiceId])
 }
@@ -151,14 +349,15 @@ model RiskIndicator {
   severity       String
   recommendation String
   reason         String
-  invoice        Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   @@index([invoiceId])
 }
 
 model BookingSuggestion {
-  id              String  @id @default(cuid())
-  invoiceId       String  @unique
+  id              String    @id @default(cuid())
+  invoiceId       String    @unique
   bookingDate     DateTime?
   documentNumber  String?
   supplier        String?
@@ -170,32 +369,52 @@ model BookingSuggestion {
   expenseAccount  String?
   supplierAccount String?
   costCenter      String?
-  status          String  @default("draft")
-  invoice         Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  status          String    @default("draft")
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 }
 
 model AuditLog {
   id          String   @id @default(cuid())
+  tenantId    String
   invoiceId   String
+  actorUserId String?
   action      String
+  actionType  String?
   description String
   actor       String
+  beforeJson  String?
+  afterJson   String?
   createdAt   DateTime @default(now())
-  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
+  actorUser User?   @relation("AuditActor", fields: [actorUserId], references: [id])
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
   @@index([invoiceId])
+  @@index([actorUserId])
 }
 
 model ExportRecord {
-  id               String   @id @default(cuid())
-  invoiceId        String
-  targetSystem     String
-  format           String
-  status           String
-  fileName         String?
+  id                String   @id @default(cuid())
+  tenantId          String
+  invoiceId         String
+  createdByUserId   String?
+  targetSystem      String
+  format            String
+  status            String
+  fileName          String?
+  downloadPath      String?
+  packagePath       String?
   validationSummary String?
-  createdAt        DateTime @default(now())
-  invoice          Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  createdAt         DateTime @default(now())
 
+  createdBy User?   @relation("ExportCreatedBy", fields: [createdByUserId], references: [id])
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
   @@index([invoiceId])
+  @@index([createdByUserId])
 }

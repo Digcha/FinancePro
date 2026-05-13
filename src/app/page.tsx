@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
+import { getCurrentSession } from "@/lib/auth/session";
 
-export default function HomePage() {
-  redirect("/dashboard");
+export default async function HomePage() {
+  const session = await getCurrentSession();
+  redirect(session ? (session.isSuperAdmin ? "/admin" : "/app/inbox") : "/login");
 }

@@ -35,8 +35,12 @@ export interface UploadedDocumentFile {
 
 export interface StoredInvoicePage extends InvoicePageInput {
   fileName: string;
+  mimeType?: string | null;
   originalFilePath: string;
   previewImagePath?: string | null;
+  pageImagePath?: string | null;
+  thumbnailPath?: string | null;
+  originalPageFilePath?: string | null;
 }
 
 export interface DocumentProcessingResult {
@@ -46,6 +50,10 @@ export interface DocumentProcessingResult {
   pages: StoredInvoicePage[];
   aiInput: InvoiceAIInput;
   warnings: string[];
+}
+
+export interface DocumentProcessingOptions {
+  saveOriginalFile?: (file: UploadedDocumentFile, index: number) => Promise<string>;
 }
 
 function uploadDir() {
@@ -92,7 +100,7 @@ function textSignalForPage(file: UploadedDocumentFile, pageNumber: number, total
 }
 
 export class DocumentProcessingService {
-  async processUploadedFiles(files: UploadedDocumentFile[]): Promise<DocumentProcessingResult> {
+  async processUploadedFiles(files: UploadedDocumentFile[], options: DocumentProcessingOptions = {}): Promise<DocumentProcessingResult> {
     if (files.length === 0) {
       throw new DocumentProcessingError("DOC_NO_READABLE_PAGES", "Keine Dateien im Upload gefunden.");
     }
@@ -136,10 +144,16 @@ export class DocumentProcessingService {
       }
 
       const storedName = `${now}-${fileIndex + 1}-${safeFileName(file.fileName)}`;
-      const filePath = path.join(directory, storedName);
-      await writeFile(filePath, file.buffer).catch((_error) => {
-        throw new DocumentProcessingError("DOC_STORAGE_FAILED", `Datei konnte nicht gespeichert werden: ${file.fileName}`, 500);
-      });
+      const filePath =
+        options.saveOriginalFile !== undefined
+          ? await options.saveOriginalFile(file, fileIndex)
+          : path.join(directory, storedName);
+
+      if (!options.saveOriginalFile) {
+        await writeFile(filePath, file.buffer).catch((_error) => {
+          throw new DocumentProcessingError("DOC_STORAGE_FAILED", `Datei konnte nicht gespeichert werden: ${file.fileName}`, 500);
+        });
+      }
 
       aiFiles.push({
         fileName: file.fileName,
@@ -162,8 +176,12 @@ export class DocumentProcessingService {
 
         pages.push({
           fileName: file.fileName,
+          mimeType: file.mimeType,
           originalFilePath: filePath,
           previewImagePath: null,
+          pageImagePath: file.mimeType.startsWith("image/") ? filePath : null,
+          thumbnailPath: null,
+          originalPageFilePath: filePath,
           pageNumberDetected: pageNumber,
           totalPagesDetected: totalAfterFile,
           qualityStatus: quality.qualityStatus,

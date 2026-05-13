@@ -10,7 +10,9 @@ const TARGET_LABELS: Record<ExportTarget, string> = {
   BMD: "bmd",
   RZL: "rzl",
   DOMIZIL_PLUS: "domizil-plus",
-  BUSINESS_CENTRAL: "business-central"
+  BUSINESS_CENTRAL: "business-central",
+  GENERIC_CSV: "generic",
+  GENERIC_JSON: "generic"
 };
 
 function csvEscape(value: unknown): string {
@@ -61,7 +63,7 @@ export class DefaultExportService {
       errors.push("Offene Validierungsfehler blockieren den Export.");
     }
 
-    if (invoice.status !== "approved" && invoice.bookingSuggestion?.status !== "approved" && !invoice.exportApproved) {
+    if (!["approved", "export_ready", "exported"].includes(invoice.status ?? "") && invoice.bookingSuggestion?.status !== "approved" && !invoice.exportApproved) {
       errors.push("Export ist erst nach Nutzerfreigabe vorgesehen.");
     }
 

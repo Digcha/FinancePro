@@ -1,96 +1,140 @@
-# FinancePro
+# FinancePro Industrial Mode
 
-FinancePro ist ein Next.js MVP fuer einen KI-Rechnungsagenten fuer österreichische Eingangsrechnungen. Die App nimmt PDF/JPG/PNG entgegen, speichert Dokumentseiten, verarbeitet sie ueber eine AI-Provider-Schicht, validiert das Ergebnis mit Zod, normalisiert Beträge/Datumswerte/UID/IBAN, prueft deterministisch nach § 11 UStG, erzeugt Risiken, Draft-Buchungsvorschlaege und kontrollierte CSV/JSON-Exports.
+FinancePro ist ein Next.js/TypeScript MVP für österreichische Eingangsrechnungen. Der aktuelle Industrial Mode ergänzt Mandanten, Accounts, Rollen, Lizenzlimits, tenant-geschützte Uploads, Review/Freigabe und Export.
 
 ## Installation
 
 ```bash
 npm install
-cp .env.example .env
+npm run db:generate
 npm run db:push
 npm run db:seed
 npm run dev
 ```
 
-Die App laeuft danach unter `http://localhost:3000`.
+## Environment
 
-## OpenAI aktivieren
+Kopieren Sie `.env.example` nach `.env` und setzen Sie mindestens:
 
-FinancePro nutzt standardmaessig `AI_PROVIDER=openai` und `AI_MODEL=gpt-4o-mini`.
-
-In `.env` setzen:
-
-```env
-OPENAI_API_KEY=dein_key
+```bash
+DATABASE_URL="file:./dev.db"
+AUTH_SECRET="long-random-secret"
+UPLOAD_DIR="./uploads"
 AI_PROVIDER=openai
 AI_MODEL=gpt-4o-mini
 AI_TEMPERATURE=0
 AI_MAX_OUTPUT_TOKENS=8000
 AI_MAX_PAGES_PER_ANALYSIS=8
-AI_ANALYSIS_TIMEOUT_SECONDS=90
+AI_USE_MOCK_WHEN_KEY_MISSING=true
+OPENAI_API_KEY=
 ```
 
-API-Keys werden nie im Code gespeichert. `.env` bleibt lokal, `.env.example` enthaelt nur leere Platzhalter.
+Ohne `OPENAI_API_KEY` läuft FinancePro stabil im Mock-Modus.
 
-Wichtig: Wenn echte KI aktiv ist, werden Rechnungsdaten und Dokumentinputs zur Analyse an OpenAI gesendet. OpenAI API-Nutzung kann kostenpflichtig sein.
+## Seed Logins
 
-## Mock-Modus
+Super Admin:
+- `admin@financepro.local` / `Admin123!`
+- Username: `admin`
 
-Wenn `OPENAI_API_KEY` fehlt und `AI_USE_MOCK_WHEN_KEY_MISSING=true` gesetzt ist, startet die App stabil im Mock-Modus. Das UI zeigt sichtbar:
+Tenant 1: Austria Wirtschaftsservice Gesellschaft mbH Demo
+- `tenantadmin@aws-demo.local` / `Tenant123!`
+- `accountant@aws-demo.local` / `User123!`
+- `reviewer@aws-demo.local` / `User123!`
 
-`KI nicht konfiguriert — Mock-Modus aktiv`
+Tenant 2: Testfirma Handwerk GmbH
+- `tenantadmin@handwerk-demo.local` / `Tenant123!`
+- `accountant@handwerk-demo.local` / `User123!`
+- `reviewer@handwerk-demo.local` / `User123!`
 
-Der Mock Provider liefert realistische Faelle: Standardrechnung, mehrseitige Eventtechnik-Rechnung, Kostenvorschreibung mit `0,00` USt und „kein steuerbarer Vorgang“, fehlende Rechnungsnummer, falsche Summe und niedrige Confidence.
+Tenant-User müssen beim ersten Login ihr Passwort ändern.
 
-## Pipeline
+## Rollenmodell
 
-1. Upload PDF/JPG/PNG
-2. Datei lokal unter `uploads/` speichern
-3. Seitenanzahl erkennen, PDF als Dateiinput oder Bilder als visuelle Inputs vorbereiten
-4. Seitenlimit pruefen
-5. GPT-4o mini oder Mock Provider analysiert
-6. JSON mit Zod validieren
-7. Werte normalisieren
-8. § 11 UStG, Beträge und Sonderfaelle deterministisch pruefen
-9. Risiken und Draft-Buchungsvorschlag erzeugen
-10. Detailseite zeigt Confidence, Quelle, Review-Status
-11. Nutzer korrigiert oder bestaetigt Felder
-12. Export erst nach Review/Freigabe
+- `SUPER_ADMIN`: FinancePro Betreiber, Firmen, Lizenzen, Nutzer, Nutzung und Audit.
+- `TENANT_ADMIN`: Firmenadmin innerhalb einer Firma, Nutzerverwaltung im Seat-Limit.
+- `ACCOUNTANT`: Upload, Review, Korrektur, Buchungsvorschlag und Export.
+- `REVIEWER`: Freigabe und Ablehnung.
+- `VIEWER`: Lesen ohne Upload oder Änderungen.
 
-Es gibt keine automatische Freigabe, keinen automatischen Export und keine automatische Reanalyse bei Refresh. Die Detailseite bietet dafuer den Button „Analyse erneut starten“ mit Kostenwarnung.
+## Tenant-Konzept
 
-## Seiten
+Normale User gehören genau zu einer Firma. Jede kundenbezogene Rechnung, Seite, Vendor, Export- und Audit-Zeile trägt `tenantId`. API-Routen verwenden den Tenant aus der Session, nicht aus Client-Input.
 
-- `/dashboard` zeigt Kennzahlen, neueste Uploads und Statusverteilung.
-- `/upload` bietet Drag & Drop fuer PDF/JPG/PNG und Mehrseiten-Gruppen.
-- `/invoices` listet alle Demo- und Upload-Rechnungen.
-- `/invoices/[id]` zeigt AI-Status, Dokumentvorschau, Confidence-Felder, Positionen, Validierung, Risiken, Review, Buchung und Export.
-- `/exports` zeigt freigegebene Belege und Exportrecords.
-- `/settings` zeigt Demo-Mandant, Regelversion und Service-Layer.
+## Upload Storage
+
+Kundendokumente liegen nicht in `public/`, sondern unter:
+
+```text
+uploads/tenants/{tenantSlug}/invoices/{invoiceId}/original/original.pdf
+uploads/tenants/{tenantSlug}/invoices/{invoiceId}/pages/page-001.png
+uploads/tenants/{tenantSlug}/invoices/{invoiceId}/thumbs/page-001.jpg
+uploads/tenants/{tenantSlug}/invoices/{invoiceId}/exports/{exportId}/...
+```
+
+Preview und Download laufen über geschützte Routen:
+- `/api/app/invoices/[id]/file/original`
+- `/api/app/invoices/[id]/file/page/[pageNumber]`
+- `/api/app/invoices/[id]/file/thumb/[pageNumber]`
+
+## Wichtige Routen
+
+Public:
+- `/login`
+- `/change-password`
+- `/logout`
+
+Super Admin:
+- `/admin`
+- `/admin/tenants`
+- `/admin/tenants/new`
+- `/admin/tenants/[id]`
+- `/admin/users`
+- `/admin/licenses`
+- `/admin/usage`
+- `/admin/audit`
+- `/admin/system`
+
+Firmen-App:
+- `/app/inbox`
+- `/app/upload`
+- `/app/invoices/[id]`
+- `/app/approvals`
+- `/app/exports`
+- `/app/vendors`
+- `/app/settings`
+
+Legacy-Routen wie `/dashboard`, `/invoices`, `/upload`, `/exports`, `/settings` leiten in den neuen App-Bereich um.
+
+## OpenAI Setup
+
+Standardmodell ist `gpt-4o-mini`. Die AI-Pipeline verlangt strukturierte JSON-Ausgaben mit Confidence und Quellenangaben. Die deterministische Validierung prüft danach Beträge, Pflichtfelder und Sonderfälle wie `0,00 USt` mit Begründung.
 
 ## Commands
 
 ```bash
-npm run dev          # lokaler Next.js Server
-npm run db:generate  # Prisma Client generieren
-npm run db:push      # SQLite Schema anlegen/aktualisieren
-npm run db:seed      # Demo-Rechnungen laden
-npm run db:reset     # DB zuruecksetzen und Seed neu laden
-npm run typecheck    # TypeScript Check
-npm run lint         # ESLint
-npm run test         # Vitest Unit Tests
-npm run build        # Produktionsbuild
+npm run db:generate
+npm run db:push
+npm run db:seed
+npm run typecheck
+npm run lint
+npm run test
+npm run build
 ```
 
-## Noch mockbasiert
+## Security Hinweise
 
-Lokale OCR, echte PDF-Seitenrenderings und Bildverbesserung sind im MVP bewusst einfach gehalten. PDFs werden als Dateiinput an OpenAI gegeben; Bilder als Base64-Bildinput. Ohne OpenAI-Key liefert der Mock Provider strukturierte Ergebnisse, damit Review, Validierung, Risiko, Buchung und Export getestet werden koennen.
+- Passwörter werden mit `bcryptjs` gehasht.
+- Sessions liegen in einem httpOnly Cookie.
+- `/admin` ist nur für `SUPER_ADMIN`.
+- Tenant-Dateien werden nie direkt öffentlich ausgeliefert.
+- Normale User können keine fremden Tenant-Rechnungen oder Dateien über URL-Manipulation öffnen.
+- Super-Admin-Zugriff auf Kundendaten wird über `PlatformAuditLog` protokolliert.
+- API Keys, Passwörter und vollständige Rechnungsdaten dürfen nicht im Client geloggt werden.
 
-## Troubleshooting
+## Aktuelle Limitierungen
 
-- `KI nicht konfiguriert — Mock-Modus aktiv`: `OPENAI_API_KEY` in `.env` setzen und Server neu starten.
-- `AI_RATE_LIMIT`: spaeter erneut analysieren oder OpenAI Limits pruefen.
-- `AI_TIMEOUT`: `AI_ANALYSIS_TIMEOUT_SECONDS` erhoehen oder Seitenzahl reduzieren.
-- `DOC_TOO_LARGE`: `MAX_UPLOAD_MB` pruefen oder kleinere Datei hochladen.
-- `DOC_INVALID_TYPE`: Nur PDF, PNG, JPG/JPEG sind erlaubt.
-- `Export blockiert`: Offene Validierungsfehler, Review-Felder oder fehlende Freigabe zuerst bearbeiten.
+- SQLite bleibt lokale MVP-Datenbank; für Produktion ist PostgreSQL vorgesehen.
+- PDF-Thumbnails werden vorbereitet, aber der Viewer nutzt für PDFs zunächst das geschützte Original im `object`/`iframe`.
+- AI läuft ohne Key im Mock-Modus.
+- BMD/RZL/Business-Central-Adapter sind exportorientierte Datei-Mappings, keine direkten API-Integrationen.

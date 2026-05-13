@@ -151,7 +151,26 @@ export const InvoiceAIExtractionResultSchema = z.object({
       severity: z.enum(["info", "warning", "error"]),
       sourcePage: z.number().int().positive().nullable()
     })
-  )
+  ),
+  vendorCandidate: z
+    .object({
+      name: z.string().nullable(),
+      uidNumber: z.string().nullable(),
+      iban: z.string().nullable(),
+      confidence: ConfidenceSchema
+    })
+    .optional(),
+  duplicateSignals: z.array(z.string()).optional(),
+  paymentReference: StringFieldSchema.optional(),
+  bookingHints: z.array(z.string()).optional(),
+  confidenceSummary: z
+    .object({
+      fieldsNeedingReview: z.number().int().nonnegative(),
+      lowestConfidence: ConfidenceSchema.nullable()
+    })
+    .optional(),
+  missingCriticalFields: z.array(z.string()).optional(),
+  suggestedReviewerMessage: z.string().nullable().optional()
 });
 
 export function parseInvoiceAIJson(jsonText: string) {

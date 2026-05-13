@@ -45,11 +45,16 @@ function needsReviewStatus(needsReview: boolean, confidence: number, finalValue:
   return "extracted";
 }
 
-function pageCreateData(pages: StoredInvoicePage[]) {
+function pageCreateData(tenantId: string, pages: StoredInvoicePage[]) {
   return pages.map((page) => ({
+    tenantId,
     fileName: page.fileName,
+    mimeType: page.mimeType ?? null,
     originalFilePath: page.originalFilePath,
     previewImagePath: page.previewImagePath ?? null,
+    pageImagePath: page.pageImagePath ?? null,
+    thumbnailPath: page.thumbnailPath ?? null,
+    originalPageFilePath: page.originalPageFilePath ?? null,
     pageNumberDetected: page.pageNumberDetected,
     totalPagesDetected: page.totalPagesDetected,
     qualityStatus: page.qualityStatus,
@@ -130,10 +135,31 @@ function bookingCreateData(bookingSuggestion: ReturnType<typeof bookingSuggestio
   };
 }
 
-function invoiceModelData(projection: NormalizedInvoiceProjection, providerStatus: AIProviderStatus, aiResult: InvoiceAIExtractionResult) {
+function invoiceModelData(
+  projection: NormalizedInvoiceProjection,
+  providerStatus: AIProviderStatus,
+  aiResult: InvoiceAIExtractionResult,
+  metadata: {
+    tenantId: string;
+    uploadedByUserId?: string | null;
+    originalFileName?: string | null;
+    originalMimeType?: string | null;
+    originalFileSize?: number | null;
+    storageRoot?: string | null;
+    documentPreviewPath?: string | null;
+  }
+) {
   const invoice = projection.invoice;
 
   return {
+    tenantId: metadata.tenantId,
+    uploadedByUserId: metadata.uploadedByUserId ?? null,
+    originalFileName: metadata.originalFileName ?? null,
+    originalMimeType: metadata.originalMimeType ?? null,
+    originalFileSize: metadata.originalFileSize ?? null,
+    storageRoot: metadata.storageRoot ?? null,
+    documentPreviewPath: metadata.documentPreviewPath ?? null,
+    currentWorkflowStep: "review",
     documentType: invoice.documentType,
     supplierName: invoice.supplierName,
     supplierAddress: invoice.supplierAddress,
@@ -170,8 +196,9 @@ function invoiceModelData(projection: NormalizedInvoiceProjection, providerStatu
   };
 }
 
-async function buildAnalysisContext(currentInvoiceId?: string): Promise<AnalysisContext> {
+async function buildAnalysisContext(tenantId: string, currentInvoiceId?: string): Promise<AnalysisContext> {
   const invoices = await prisma.invoice.findMany({
+    where: { tenantId },
     select: {
       id: true,
       supplierName: true,
@@ -218,12 +245,20 @@ function invoiceInputForValidation(projection: NormalizedInvoiceProjection, page
 
 export class InvoiceAIPersistenceService {
   async createFromAIResult(params: {
+    invoiceId?: string;
+    tenantId: string;
+    uploadedByUserId?: string | null;
+    originalFileName?: string | null;
+    originalMimeType?: string | null;
+    originalFileSize?: number | null;
+    storageRoot?: string | null;
+    documentPreviewPath?: string | null;
     pages: StoredInvoicePage[];
     aiResult: InvoiceAIExtractionResult;
     providerStatus: AIProviderStatus;
   }) {
     const projection = invoiceNormalizationService.normalizeAIResult(params.aiResult);
-    const context = await buildAnalysisContext();
+    const context = await buildAnalysisContext(params.tenantId);
     const invoiceInput = invoiceInputForValidation(projection, params.pages);
     const validationResults = invoiceValidationService.validate(invoiceInput, context);
     const riskIndicators = riskAnalysisService.analyze(invoiceInput, validationResults, context);
@@ -231,14 +266,16 @@ export class InvoiceAIPersistenceService {
 
     return prisma.invoice.create({
       data: {
-        ...invoiceModelData(projection, params.providerStatus, params.aiResult),
+        id: params.invoiceId,
+        ...invoiceModelData(projection, params.providerStatus, params.aiResult, params),
         status: "review_required",
         reviewStatus: "pending",
         validationStatus: summarizeValidation(validationResults),
         riskLevel: summarizeRisk(riskIndicators),
         exportApproved: false,
+        exportStatus: "blocked",
         pages: {
-          create: pageCreateData(params.pages)
+          create: pageCreateData(params.tenantId, params.pages)
         },
         extractedFields: {
           create: extractedFieldCreateData(projection)
@@ -258,22 +295,34 @@ export class InvoiceAIPersistenceService {
         auditLogs: {
           create: [
             {
+              tenantId: params.tenantId,
+              actorUserId: params.uploadedByUserId ?? null,
               action: "DOCUMENT_UPLOADED",
+              actionType: "DOCUMENT_UPLOADED",
               description: `${params.pages.length} Seite(n) gespeichert.`,
-              actor: "Upload API"
+              actor: params.uploadedByUserId ?? "Upload API"
             },
             {
+              tenantId: params.tenantId,
+              actorUserId: params.uploadedByUserId ?? null,
               action: "AI_ANALYSIS_COMPLETED",
+              actionType: "AI_ANALYSIS_COMPLETED",
               description: `${params.providerStatus.providerName}/${params.providerStatus.modelName} Analyse abgeschlossen.`,
               actor: params.providerStatus.mode === "mock" ? "MockInvoiceProvider" : "OpenAIInvoiceProvider"
             },
             {
+              tenantId: params.tenantId,
+              actorUserId: params.uploadedByUserId ?? null,
               action: "RULE_CHECK_COMPLETED",
+              actionType: "RULE_CHECK_COMPLETED",
               description: "Deterministische Validierung ausgefuehrt.",
               actor: "InvoiceValidationService"
             },
             {
+              tenantId: params.tenantId,
+              actorUserId: params.uploadedByUserId ?? null,
               action: "BOOKING_SUGGESTION_CREATED",
+              actionType: "BOOKING_SUGGESTION_CREATED",
               description: "Draft-Buchungsvorschlag erzeugt.",
               actor: "BookingSuggestionService"
             }
@@ -284,6 +333,13 @@ export class InvoiceAIPersistenceService {
   }
 
   async createFailedAnalysis(params: {
+    invoiceId?: string;
+    tenantId: string;
+    uploadedByUserId?: string | null;
+    originalFileName?: string | null;
+    originalMimeType?: string | null;
+    originalFileSize?: number | null;
+    storageRoot?: string | null;
     pages: StoredInvoicePage[];
     providerStatus: AIProviderStatus;
     error: unknown;
@@ -320,12 +376,20 @@ export class InvoiceAIPersistenceService {
 
     return prisma.invoice.create({
       data: {
+        id: params.invoiceId,
+        tenantId: params.tenantId,
+        uploadedByUserId: params.uploadedByUserId ?? null,
+        originalFileName: params.originalFileName ?? null,
+        originalMimeType: params.originalMimeType ?? null,
+        originalFileSize: params.originalFileSize ?? null,
+        storageRoot: params.storageRoot ?? null,
         documentType: "unknown",
         status: "review_required",
         reviewStatus: "pending",
         validationStatus: summarizeValidation(validationResults),
         riskLevel: summarizeRisk(riskIndicators),
         exportApproved: false,
+        exportStatus: "blocked",
         aiProvider: params.providerStatus.providerName,
         aiModel: params.providerStatus.modelName,
         aiMode: params.providerStatus.mode,
@@ -334,7 +398,7 @@ export class InvoiceAIPersistenceService {
         aiErrorMessage: aiError.message,
         currency: "EUR",
         pages: {
-          create: pageCreateData(params.pages)
+          create: pageCreateData(params.tenantId, params.pages)
         },
         validationResults: {
           create: validationCreateData(validationResults)
@@ -348,12 +412,18 @@ export class InvoiceAIPersistenceService {
         auditLogs: {
           create: [
             {
+              tenantId: params.tenantId,
+              actorUserId: params.uploadedByUserId ?? null,
               action: "DOCUMENT_UPLOADED",
+              actionType: "DOCUMENT_UPLOADED",
               description: `${params.pages.length} Seite(n) gespeichert.`,
-              actor: "Upload API"
+              actor: params.uploadedByUserId ?? "Upload API"
             },
             {
+              tenantId: params.tenantId,
+              actorUserId: params.uploadedByUserId ?? null,
               action: "AI_ANALYSIS_FAILED",
+              actionType: "AI_ANALYSIS_FAILED",
               description: `${aiError.code}: ${aiError.message}`,
               actor: params.providerStatus.mode === "mock" ? "MockInvoiceProvider" : "OpenAIInvoiceProvider"
             }
@@ -364,8 +434,13 @@ export class InvoiceAIPersistenceService {
   }
 
   async replaceAnalysis(invoiceId: string, aiResult: InvoiceAIExtractionResult, providerStatus: AIProviderStatus, pages: StoredInvoicePage[]) {
+    const current = await prisma.invoice.findUnique({ where: { id: invoiceId } });
+    if (!current) {
+      return null;
+    }
+
     const projection = invoiceNormalizationService.normalizeAIResult(aiResult);
-    const context = await buildAnalysisContext(invoiceId);
+    const context = await buildAnalysisContext(current.tenantId, invoiceId);
     const invoiceInput = invoiceInputForValidation(projection, pages);
     const validationResults = invoiceValidationService.validate({ ...invoiceInput, id: invoiceId }, context);
     const riskIndicators = riskAnalysisService.analyze({ ...invoiceInput, id: invoiceId }, validationResults, context);
@@ -380,12 +455,21 @@ export class InvoiceAIPersistenceService {
       prisma.invoice.update({
         where: { id: invoiceId },
         data: {
-          ...invoiceModelData(projection, providerStatus, aiResult),
+          ...invoiceModelData(projection, providerStatus, aiResult, {
+            tenantId: current.tenantId,
+            uploadedByUserId: current.uploadedByUserId,
+            originalFileName: current.originalFileName,
+            originalMimeType: current.originalMimeType,
+            originalFileSize: current.originalFileSize,
+            storageRoot: current.storageRoot,
+            documentPreviewPath: current.documentPreviewPath
+          }),
           status: "review_required",
           reviewStatus: "pending",
           validationStatus: summarizeValidation(validationResults),
           riskLevel: summarizeRisk(riskIndicators),
           exportApproved: false,
+          exportStatus: "blocked",
           extractedFields: {
             create: extractedFieldCreateData(projection)
           },
@@ -404,6 +488,8 @@ export class InvoiceAIPersistenceService {
           auditLogs: {
             create: {
               action: "AI_ANALYSIS_COMPLETED",
+              tenantId: current.tenantId,
+              actionType: "AI_ANALYSIS_COMPLETED",
               description: "Analyse wurde manuell erneut gestartet und gespeichert.",
               actor: providerStatus.mode === "mock" ? "MockInvoiceProvider" : "OpenAIInvoiceProvider"
             }

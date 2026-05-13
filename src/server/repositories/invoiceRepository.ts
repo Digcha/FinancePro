@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import type { AppSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 
 export const invoiceInclude = {
@@ -21,7 +22,7 @@ export const invoiceInclude = {
   auditLogs: {
     orderBy: { createdAt: "desc" as const }
   },
-  exports: {
+  exportedRecords: {
     orderBy: { createdAt: "desc" as const }
   }
 } satisfies Prisma.InvoiceInclude;
@@ -30,22 +31,30 @@ export type InvoiceWithRelations = Prisma.InvoiceGetPayload<{
   include: typeof invoiceInclude;
 }>;
 
-export async function getInvoices(): Promise<InvoiceWithRelations[]> {
+function tenantFilter(session: AppSession): Prisma.InvoiceWhereInput {
+  return session.isSuperAdmin ? {} : { tenantId: session.tenantId ?? "__no_tenant__" };
+}
+
+export async function getInvoices(session: AppSession): Promise<InvoiceWithRelations[]> {
   return prisma.invoice.findMany({
+    where: tenantFilter(session),
     include: invoiceInclude,
     orderBy: { createdAt: "desc" }
   });
 }
 
-export async function getInvoiceById(id: string): Promise<InvoiceWithRelations | null> {
-  return prisma.invoice.findUnique({
-    where: { id },
+export async function getInvoiceById(id: string, session: AppSession): Promise<InvoiceWithRelations | null> {
+  return prisma.invoice.findFirst({
+    where: {
+      id,
+      ...tenantFilter(session)
+    },
     include: invoiceInclude
   });
 }
 
-export async function getDashboardData() {
-  const invoices = await getInvoices();
+export async function getDashboardData(session: AppSession) {
+  const invoices = await getInvoices(session);
   const total = invoices.length;
   const valid = invoices.filter((invoice) => invoice.validationStatus === "valid").length;
   const warnings = invoices.filter((invoice) => invoice.validationStatus === "warning").length;
@@ -69,8 +78,9 @@ export async function getDashboardData() {
   };
 }
 
-export async function getExportRecords() {
+export async function getExportRecords(session: AppSession) {
   return prisma.exportRecord.findMany({
+    where: session.isSuperAdmin ? {} : { tenantId: session.tenantId ?? "__no_tenant__" },
     include: {
       invoice: true
     },

@@ -30,7 +30,7 @@ export function UploadDropzone() {
         formData.append("files", file);
       }
 
-      const response = await fetch("/api/invoices/upload", {
+      const response = await fetch("/api/app/invoices/upload", {
         method: "POST",
         body: formData
       });
@@ -69,9 +69,7 @@ export function UploadDropzone() {
           <UploadCloud className="h-7 w-7" aria-hidden="true" />
         </div>
         <div className="mt-5 text-base font-semibold text-ink-900">PDF, JPG oder PNG ablegen</div>
-        <div className="mt-2 max-w-md text-sm leading-6 text-ink-500">
-          Mehrere Dateien in einem Upload werden als eine Dokumentgruppe verarbeitet.
-        </div>
+        <div className="mt-2 max-w-md text-sm leading-6 text-ink-500">Die Rechnung wird gelesen und danach in den Eingang gelegt.</div>
       </button>
 
       {files.length > 0 ? (
@@ -80,7 +78,7 @@ export function UploadDropzone() {
             <div className="flex items-center justify-between gap-4">
               <div>
                 <h2 className="text-sm font-semibold text-ink-900">Upload-Gruppe</h2>
-                <p className="mt-1 text-xs text-ink-500">{files.length} Datei(en), Seitenprüfung folgt nach Upload.</p>
+                <p className="mt-1 text-xs text-ink-500">{files.length} Datei(en), Verarbeitung startet nach dem Upload.</p>
               </div>
               {files.length > 1 ? <StatusPill tone="info">Mehrseiten-Rechnung möglich</StatusPill> : null}
             </div>
@@ -95,7 +93,7 @@ export function UploadDropzone() {
             ))}
           </div>
           <div className="flex items-center justify-between gap-4 border-t border-ink-200 px-5 py-4">
-            <div className="text-xs text-ink-500">Analyse nutzt OpenAI bei API-Key, sonst sichtbar den Mock-Modus.</div>
+            <div className="text-xs text-ink-500">Nach dem Upload sehen Sie nur Felder, die geprüft werden müssen.</div>
             <button
               type="button"
               disabled={isPending}
@@ -117,7 +115,7 @@ export function UploadDropzone() {
         <div className="rounded-md border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
           Upload gespeichert. {result.aiMessage ? <span className="font-medium">{result.aiMessage}. </span> : null}
           {result.warning ? <span className="font-medium">{result.warning}. </span> : null}
-          <Link className="font-semibold underline" href={`/invoices/${result.invoiceId}`}>
+          <Link className="font-semibold underline" href={`/app/invoices/${result.invoiceId}`}>
             Rechnung öffnen
           </Link>
         </div>
